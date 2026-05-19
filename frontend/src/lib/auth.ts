@@ -1,12 +1,20 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+let _supabase: SupabaseClient | null = null;
+
+export function getSupabaseClient(): SupabaseClient {
+  if (_supabase) return _supabase;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  }
+  _supabase = createClient(url, key);
+  return _supabase;
+}
 
 export async function signIn(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await getSupabaseClient().auth.signInWithPassword({ email, password });
   if (error) throw error;
   if (data.session?.access_token) {
     localStorage.setItem('token', data.session.access_token);
@@ -16,10 +24,10 @@ export async function signIn(email: string, password: string) {
 
 export async function signOut() {
   localStorage.removeItem('token');
-  await supabase.auth.signOut();
+  await getSupabaseClient().auth.signOut();
 }
 
 export async function getSession() {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await getSupabaseClient().auth.getSession();
   return data.session;
 }
