@@ -2,9 +2,13 @@ name: Deploy Asset Lookup Tool to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - claude/build-it-hr-platform-3W9ru
+      - claude/it-asset-lookup-tool-QCbrn
     paths:
       - 'asset-lookup-tool/**'
+  workflow_dispatch:  # allow manual trigger from GitHub Actions tab
 
 permissions:
   contents: write
