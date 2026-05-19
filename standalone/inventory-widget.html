@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IT Inventory Tool</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f8fafc; color: #1e293b; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+  h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 1rem; }
+  .toolbar { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  input[type=search] { padding: .45rem .75rem; border: 1px solid #cbd5e1; border-radius: .5rem; font-size: .875rem; flex: 1; min-width: 200px; }
+  button { padding: .45rem .9rem; background: #2563eb; color: #fff; border: none; border-radius: .5rem; font-size: .875rem; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #1d4ed8; }
+  button.secondary { background: #64748b; }
+  button.secondary:hover { background: #475569; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: .75rem; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  th { background: #f1f5f9; text-align: left; padding: .6rem 1rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
+  td { padding: .65rem 1rem; font-size: .875rem; border-top: 1px solid #f1f5f9; }
+  tr:hover td { background: #f8fafc; cursor: pointer; }
+  .badge { display: inline-block; padding: .2rem .5rem; border-radius: 9999px; font-size: .7rem; font-weight: 600; }
+  .badge-green  { background: #dcfce7; color: #166534; }
+  .badge-blue   { background: #dbeafe; color: #1e40af; }
+  .badge-yellow { background: #fef9c3; color: #92400e; }
+  .badge-red    { background: #fee2e2; color: #991b1b; }
+  .tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  .tab { padding: .4rem .9rem; border-radius: .5rem; font-size: .875rem; cursor: pointer; background: #e2e8f0; border: none; color: #1e293b; }
+  .tab.active { background: #2563eb; color: #fff; }
+  #status { font-size: .8rem; color: #64748b; margin-left: auto; }
+  .drop-zone { border: 2px dashed #cbd5e1; border-radius: .75rem; padding: 2rem; text-align: center; color: #94a3b8; font-size: .875rem; margin-bottom: 1rem; cursor: pointer; transition: border-color .15s; }
+  .drop-zone.drag-over { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; }
+  .modal-overlay.open { display: flex; align-items: center; justify-content: center; }
+  .modal { background: #fff; border-radius: .75rem; padding: 1.5rem; max-width: 540px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .modal h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; }
+  .modal table { font-size: .8rem; }
+  .modal-close { float: right; background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #64748b; padding: 0; }
+  .checklist li { list-style: none; padding: .4rem 0; display: flex; align-items: center; gap: .5rem; font-size: .875rem; }
+  .checklist input[type=checkbox] { width: 1rem; height: 1rem; cursor: pointer; }
+  .timeline li { list-style: none; padding: .4rem 0 .4rem 1rem; border-left: 2px solid #e2e8f0; margin-left: .5rem; font-size: .8rem; color: #475569; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>IT Inventory Tool</h1>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('employees')">Employees</button>
+    <button class="tab" onclick="switchTab('assets')">Assets</button>
+    <button class="tab" onclick="switchTab('licenses')">Licenses</button>
+  </div>
+
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone"
+       ondragover="event.preventDefault();this.classList.add('drag-over')"
+       ondragleave="this.classList.remove('drag-over')"
+       ondrop="handleDrop(event)"
+       onclick="document.getElementById('csvFile').click()">
+    Drop a CSV file here, or click to browse
+    <input type="file" id="csvFile" accept=".csv" onchange="loadCSV()" style="display:none">
+  </div>
+
+  <div class="toolbar">
+    <input type="search" id="searchBox" placeholder="Search…" oninput="renderTable()">
+    <button class="secondary" onclick="exportCSV()">Export CSV</button>
+    <button class="secondary" onclick="exportTxt()">Export TXT</button>
+    <span id="status"></span>
+  </div>
+
+  <table id="dataTable">
+    <thead id="tableHead"></thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+</div>
+
+<!-- Row detail modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let allData = [];
+let currentTab = 'employees';
+
+const COLS = {
+  employees: ['full_name','email','job_title','department','status','hire_date','location'],
+  assets:    ['name','asset_type','serial_number','model','status','warranty_expiry','cost'],
+  licenses:  ['software','seats_total','seats_used','expiry_date','monthly_cost','status'],
+};
+
+const STATUS_BADGE = {
+  active:'green', available:'green', assigned:'blue',
+  offboarding:'yellow', maintenance:'yellow',
+  inactive:'red', retired:'red', expired:'red', expiring_soon:'yellow',
+};
+
+const DEFAULT_ONBOARDING_TASKS = [
+  'Account Created',
+  'Laptop Assigned',
+  'Security Training Assigned',
+  'Badge / Access Card Issued',
+  'Welcome Email Sent',
+];
+
+// ─── Tab switching ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  allData = [];
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab')[['employees','assets','licenses'].indexOf(tab)].classList.add('active');
+  document.getElementById('searchBox').value = '';
+  document.getElementById('dropZone').textContent = `Drop a ${tab} CSV file here, or click to browse`;
+  renderTable();
+}
+
+// ─── CSV loading ──────────────────────────────────────────────────────────────
+function handleDrop(event) {
+  event.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  const file = event.dataTransfer.files[0];
+  if (file) parseFile(file);
+}
+
+function loadCSV() {
+  const file = document.getElementById('csvFile').files[0];
+  if (file) parseFile(file);
+}
+
+function parseFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.replace(/\r/g,'').split('\n').filter(l => l.trim());
+    if (lines.length < 2) { alert('CSV must have a header row and at least one data row.'); return; }
+    const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/[\s\-]+/g,'_'));
+    allData = lines.slice(1).map(line => {
+      const vals = parseCSVLine(line);
+      return Object.fromEntries(headers.map((h, i) => [h, vals[i]?.trim() ?? '']));
+    }).filter(r => Object.values(r).some(v => v));
+    document.getElementById('status').textContent = `${allData.length} rows loaded from "${file.name}"`;
+    renderTable();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function parseCSVLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (const ch of line) {
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === ',' && !inQ) { result.push(cur); cur = ''; }
+    else { cur += ch; }
+  }
+  result.push(cur);
+  return result;
+}
+
+// ─── Rendering ────────────────────────────────────────────────────────────────
+function getFilteredData() {
+  const q = document.getElementById('searchBox').value.toLowerCase().trim();
+  if (!q) return allData;
+  return allData.filter(row => Object.values(row).some(v => String(v).toLowerCase().includes(q)));
+}
+
+function renderTable() {
+  const cols = COLS[currentTab] || Object.keys(allData[0] || {});
+  const data = getFilteredData();
+
+  document.getElementById('tableHead').innerHTML =
+    '<tr>' + cols.map(c => `<th>${c.replace(/_/g,' ')}</th>`).join('') + '</tr>';
+
+  if (!data.length) {
+    document.getElementById('tableBody').innerHTML =
+      `<tr><td colspan="${cols.length}" style="text-align:center;padding:2.5rem;color:#94a3b8">` +
+      (allData.length ? 'No matching results' : 'No data — drop a CSV file above to get started') +
+      '</td></tr>';
+  } else {
+    document.getElementById('tableBody').innerHTML = data.map((row, idx) =>
+      `<tr onclick="openDetail(${idx})">${cols.map(c => `<td>${renderCell(c, row[c] ?? '')}</td>`).join('')}</tr>`
+    ).join('');
+  }
+
+  if (allData.length) {
+    document.getElementById('status').textContent = `Showing ${data.length} of ${allData.length}`;
+  }
+}
+
+function renderCell(col, val) {
+  if (col === 'status') {
+    const cls = STATUS_BADGE[String(val).toLowerCase()] || '';
+    return cls ? `<span class="badge badge-${cls}">${escHtml(val)}</span>` : escHtml(val);
+  }
+  if ((col === 'warranty_expiry' || col === 'expiry_date') && val) {
+    const d = new Date(val);
+    const soon = new Date(); soon.setDate(soon.getDate() + 30);
+    if (d < new Date()) return `<span class="badge badge-red">${escHtml(val)} expired</span>`;
+    if (d <= soon)      return `<span class="badge badge-yellow">${escHtml(val)} soon</span>`;
+  }
+  return escHtml(val);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Row detail modal ─────────────────────────────────────────────────────────
+function openDetail(idx) {
+  const filtered = getFilteredData();
+  const row = filtered[idx];
+  if (!row) return;
+
+  document.getElementById('modalTitle').textContent =
+    row.full_name || row.name || row.software || 'Details';
+
+  let html = '<table style="width:100%;margin-bottom:1rem">';
+  for (const [k, v] of Object.entries(row)) {
+    html += `<tr><th style="width:40%;text-align:left;padding:.3rem .5rem;font-size:.75rem;color:#475569">${k.replace(/_/g,' ')}</th>` +
+            `<td style="padding:.3rem .5rem">${renderCell(k, v)}</td></tr>`;
+  }
+  html += '</table>';
+
+  if (currentTab === 'employees') {
+    html += '<h3 style="font-size:.875rem;font-weight:600;margin-bottom:.5rem">Onboarding Checklist</h3>' +
+            '<ul class="checklist">' +
+            DEFAULT_ONBOARDING_TASKS.map((t, i) =>
+              `<li><input type="checkbox" id="task${idx}_${i}"><label for="task${idx}_${i}">${escHtml(t)}</label></li>`
+            ).join('') + '</ul>';
+  }
+
+  if (currentTab === 'assets' && row.assigned_to) {
+    html += '<h3 style="font-size:.875rem;font-weight:600;margin:1rem 0 .5rem">Current Assignment</h3>' +
+            `<ul class="timeline"><li>Assigned to: <strong>${escHtml(row.assigned_to)}</strong></li></ul>`;
+  }
+
+  document.getElementById('modalContent').innerHTML = html;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const cols = COLS[currentTab] || (allData[0] ? Object.keys(allData[0]) : []);
+  const data = getFilteredData();
+  if (!data.length) { alert('Nothing to export.'); return; }
+  const lines = [cols.join(','), ...data.map(r =>
+    cols.map(c => { const v = String(r[c] ?? '').replace(/"/g,'""'); return /[,"\n]/.test(v) ? `"${v}"` : v; }).join(',')
+  )];
+  download(lines.join('\n'), `${currentTab}-export.csv`, 'text/csv');
+}
+
+function exportTxt() {
+  const cols = COLS[currentTab] || (allData[0] ? Object.keys(allData[0]) : []);
+  const data = getFilteredData();
+  if (!data.length) { alert('Nothing to export.'); return; }
+  const widths = cols.map(c => Math.max(c.length, ...data.map(r => String(r[c] ?? '').length)));
+  const pad = (s, n) => String(s).padEnd(n);
+  const lines = [
+    cols.map((c, i) => pad(c.replace(/_/g,' '), widths[i])).join('  |  '),
+    widths.map(n => '-'.repeat(n)).join('--+--'),
+    ...data.map(r => cols.map((c, i) => pad(r[c] ?? '', widths[i])).join('  |  ')),
+  ];
+  download(lines.join('\n'), `${currentTab}-export.txt`, 'text/plain');
+}
+
+function download(content, filename, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = filename;
+  a.click();
+}
+
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault();
+    document.getElementById('searchBox').focus();
+  }
+});
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+renderTable();
+</script>
+</body>
+</html>
