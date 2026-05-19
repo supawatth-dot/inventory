@@ -1,0 +1,44 @@
+name: Deploy Asset Lookup Tool to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - claude/build-it-hr-platform-3W9ru
+      - claude/it-asset-lookup-tool-QCbrn
+    paths:
+      - 'asset-lookup-tool/**'
+  workflow_dispatch:  # allow manual trigger from GitHub Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    name: Build & deploy to gh-pages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: asset-lookup-tool/package-lock.json
+
+      - name: Install dependencies
+        working-directory: asset-lookup-tool
+        run: npm ci
+
+      - name: Build
+        working-directory: asset-lookup-tool
+        run: npm run build
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: asset-lookup-tool/build
